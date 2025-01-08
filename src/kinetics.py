@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from .data import t as T
 from .data import f_t as F_T
+from .data import oos_f_t as OOS_F_T
 
 def model_KM_V1(t, a: float):
     """
@@ -131,9 +132,26 @@ def model_MARX_2000(t, kn1: float, kn2: float, kp1: float, kp2: float):
     Lo = np.exp(L1 * t) * B1 + np.exp(L2 * t) * B2
     return C * (Li + Lo)
 
+def assess(y, x_m, dim_n=1):
+    """
+    Find usual suspects for goodness of fit:
+    - R^2
+    - Adjusted R^2 (penalises for # of terms fit)
+    - MSE 
+    - AIC, BIC
+    """
     
+    r = y - x_m
+    r_sq = 1 - np.sum(r**2) / np.sum((y - np.mean(y))**2)
+    mse = np.mean(r**2)
+    r_sq_adj = 1 - (1 - r_sq) * (len(y) - 1) / (len(y) - dim_n - 1)
+    aic = len(y) * np.log(np.sum(r**2) / len(y)) + 2 * dim_n
+    bic = len(y) * np.log(np.sum(r**2) / len(y)) + dim_n * np.log(len(y))
+    
+    return {
+        "rez": r, "r2": r_sq, "r2_adj": r_sq_adj, "mse": mse, "aic": aic, "bic": bic
+    }
 
-    
 fit_1, fit_2, fit_3, fit_mx = [], [], [], []
 fig, axs = plt.subplots(4, 2, figsize=(12, 6))
 tx = np.linspace(0, 810, num=100)
@@ -142,17 +160,17 @@ for i, s_i in enumerate(F_T()):
     y_data = np.array(s_i) #/ sample[0]  # Normalize to start at 1
 
     p0_V1 = [0.01]
-    p0_V2 = [0.01, 0]
-    p0_V3 = [0.01, 0, 0.2]
-    p0_MX = [0, 0.00001, 0.2, 0.01]
+    p0_V2 = [0.01, 0.01]
+    p0_V3 = [0.01, 0.01, 0.2]
+    p0_MX = [0.01, 0.00001, 0.2, 0.01]
 
-    popt_V1, pcov_V1 = curve_fit(model_KM_V1, T(), y_data, p0=p0_V1, bounds=(0, 1e10))
-    popt_V2, pcov_V2 = curve_fit(model_KM_V2, T(), y_data, p0=p0_V2, bounds=[(0, -1e10), (1e10, 0)])
-    popt_V3, pcov_V3 = curve_fit(model_KM_V3, T(), y_data, p0=p0_V3, bounds=[(0, -1e10, 0), (1e10, 0, 1e10)])
+    popt_V1, pcov_V1 = curve_fit(model_KM_V1, T(), y_data, p0=p0_V1)
+    popt_V2, pcov_V2 = curve_fit(model_KM_V2, T(), y_data, p0=p0_V2)
+    popt_V3, pcov_V3 = curve_fit(model_KM_V3, T(), y_data, p0=p0_V3)
     fit_1.append(popt_V1)
     fit_2.append(popt_V2)
     fit_3.append(popt_V3)
-    j = int(np.floor(i/4))
+    j = int(np.floor(i / (len(F_T()) / 2)))
     axs[i%4, j].plot(T(), F_T()[i], label=f"Run {i + 1}")
     axs[i%4, j].plot(tx, model_KM_V1(tx, *popt_V1), '--', label=f"Run {i+1} Fit - V1")
     axs[i%4, j].plot(tx, model_KM_V2(tx, *popt_V2), '--', label=f"Run {i+1} Fit - V2")
@@ -162,13 +180,50 @@ for i, s_i in enumerate(F_T()):
     axs[i%4, j].set_ylabel("F(t)")
     axs[i%4, j].set_xlabel("Time")
 
+plt.title("Sample of 8 - Training")
 plt.show()
-for i, params in enumerate(fit_1):
-    print(params[0])
 
-for i, params in enumerate(fit_2):
-    print(params[0], params[1])
+v1_a = sum(a[0] for a in fit_1) / 8
+v2_a = sum(a[0] for a in fit_2) / 8
+v3_a = sum(a[0] for a in fit_3) / 8
+v2_b = sum(b[1] for b in fit_2) / 8
+v3_b = sum(b[1] for b in fit_3) / 8
+v3_g = sum(g[2] for g in fit_3) / 8
 
+print("--------------- AVG MODEL COEFFICIENTS -------------------")
+print(v1_a)
+print(v2_a, v2_b)
+print(v3_a, v3_b, v3_g)
+print("----------------------------------------------------------")
 
-for i, params in enumerate(fit_3):
-    print(params[0], params[1], params[2])
+fig, axs = plt.subplots(4, 4, figsize=(12, 6))
+for i, s_i in enumerate(OOS_F_T()):
+    y_data = np.array(s_i)
+    j = int(np.floor(i / 4))
+    axs[i%4, j].plot(T(), OOS_F_T()[i], label=f"Run {i+1}")
+    axs[i%4, j].plot(tx, model_KM_V1(tx, v1_a), '--', label=f"Run {i+1} Fit - V1")
+    axs[i%4, j].plot(tx, model_KM_V2(tx, v2_a, v2_b), '--', label=f"Run {i+1} Fit - V2")
+    axs[i%4, j].plot(tx, model_KM_V3(tx, v3_a, v3_b, v3_g), '--', label=f"Run {i+1} Fit - V3")
+    axs[i%4, j].grid(True)
+    axs[i%4, j].legend()
+    axs[i%4, j].set_ylabel("F(t)")
+    axs[i%4, j].set_xlabel("Time")
+
+plt.title("Sample of 14 - Testing")
+plt.show()
+
+r2_1, r2_2, r2_3 = [], [], []
+r2a_1, r2a_2, r2a_3 = [], [], []
+for i, s_i in enumerate(OOS_F_T()):
+    y_data = np.array(s_i)
+    r1 = assess(y_data, model_KM_V1(T(), v1_a), dim_n=1)
+    r2 = assess(y_data, model_KM_V2(T(), v2_a, v2_b), dim_n=2)
+    r3 = assess(y_data, model_KM_V3(T(), v3_a, v3_b, v3_g), dim_n=3)
+    r2_1.append(r1['r2'])
+    r2_2.append(r2['r2'])
+    r2_3.append(r3['r2'])
+    r2a_1.append(r1['r2_adj'])
+    r2a_2.append(r2['r2_adj'])
+    r2a_3.append(r3['r2_adj'])
+
+print(*r2_3, *r2a_3, sep='\n')
